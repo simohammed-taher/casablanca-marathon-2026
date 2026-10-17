@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Casablanca Marathon 2026 — Course map</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,640&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://unpkg.com/maplibre-gl@5.15.0/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #1c1915;
+      --muted: #6f675e;
+      --paper: #f7f3ea;
+      --paper-2: #fffdf8;
+      --line: rgba(28, 25, 21, 0.1);
+      --accent: #0f6e56;
+      --half: #0f6e56;
+      --full: #c4491d;
+      --shadow: 0 18px 44px rgba(48, 32, 14, 0.16);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      color: var(--ink);
+      font-family: Outfit, "Segoe UI", sans-serif;
+      background: #d7d0c4;
+    }
+
+    #map {
+      position: fixed;
+      inset: 0;
+    }
+
+    .loading {
+      position: fixed;
+      z-index: 400;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%);
+      margin: 0;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 253, 248, 0.94);
+      color: var(--muted);
+      font-size: 13px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel {
+      position: fixed;
+      z-index: 1000;
+      top: 16px;
+      left: 16px;
+      width: min(336px, calc(100vw - 32px));
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      padding: 16px 16px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(28, 25, 21, 0.08);
+      border-top: 4px solid var(--accent);
+      background: var(--paper-2);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .kicker {
+      margin: 0;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    h1 {
+      margin: 2px 0 0;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 28px;
+      font-weight: 560;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+
+    .text-btn {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 0;
+    }
+
+    .text-btn:hover { color: var(--ink); }
+
+    .switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .switch button {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 8px 8px;
+      background: transparent;
+      color: var(--btn, var(--ink));
+      box-shadow: inset 0 0 0 1.5px var(--btn, var(--ink));
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .switch button[data-route="21"] { --btn: var(--half); }
+    .switch button[data-route="42"] { --btn: var(--full); }
+
+    .switch button b {
+      display: block;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 32px;
+      font-weight: 560;
+      line-height: 0.95;
+      letter-spacing: -0.03em;
+    }
+
+    .switch button span {
+      display: block;
+      margin-top: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .switch button[aria-checked="true"] {
+      background: var(--btn);
+      color: white;
+      box-shadow: none;
+    }
+
+    .kind {
+      margin: 14px 0 0;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .distance {
+      margin: 2px 0 0;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 42px;
+      font-weight: 560;
+      letter-spacing: -0.04em;
+      line-height: 1;
+    }
+
+    .name {
+      margin: 4px 0 0;
+      font-size: 15px;
+    }
+
+    .facts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 12px 0 0;
+    }
+
+    .facts div {
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: var(--paper);
+    }
+
+    .facts dt {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .facts dd {
+      margin: 2px 0 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .elev {
+      margin: 12px 0 0;
+    }
+
+    .elev figcaption {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    #spark {
+      display: block;
+      width: 100%;
+      height: 48px;
+      margin-top: 4px;
+    }
+
+    .elev-scale {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .hint, .file {
+      margin: 10px 0 0;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .file {
+      font-size: 11px;
+    }
+
+    .actions {
+      margin-top: 12px;
+    }
+
+    .actions button {
+      border: 0;
+      border-radius: 999px;
+      padding: 8px 14px;
+      background: var(--ink);
+      color: var(--paper);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .actions button:hover { background: #322c26; }
+
+    .along {
+      margin: 12px 0 0;
+      padding-top: 10px;
+      border-top: 1px solid var(--line);
+      min-height: 2.7em;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .along strong {
+      font-family: Fraunces, Georgia, serif;
+      font-size: 16px;
+      font-weight: 560;
+    }
+
+    .panel.is-collapsed .details { display: none; }
+
+    .panel.is-collapsed { width: min(336px, calc(100vw - 32px)); }
+
+    button:focus-visible {
+      outline: 2px solid var(--ink);
+      outline-offset: 2px;
+    }
+
+    .end-mark, .km-mark, .hover-dot {
+      user-select: none;
+    }
+
+    .end-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 2px solid white;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 16px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+    }
+
+    .km-mark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 2px solid white;
+      border-radius: 50%;
+      background: var(--ink);
+      color: white;
+      font-size: 10px;
+      font-weight: 600;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .hover-dot {
+      width: 14px;
+      height: 14px;
+      border: 3px solid var(--accent);
+      border-radius: 50%;
+      background: white;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+    }
+
+    .course-popup { pointer-events: none; }
+
+    .maplibregl-popup-content {
+      border-radius: 10px;
+      padding: 8px 10px;
+      color: var(--ink);
+      font-family: Outfit, "Segoe UI", sans-serif;
+      box-shadow: 0 10px 24px rgba(40, 28, 12, 0.18);
+    }
+
+    .maplibregl-popup-content strong {
+      display: block;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 15px;
+      font-weight: 560;
+    }
+
+    .maplibregl-popup-content span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .course-popup .maplibregl-popup-content {
+      background: var(--ink);
+      color: var(--paper);
+    }
+
+    .course-popup .maplibregl-popup-content span { color: #e4d9c8; }
+    .course-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--ink); }
+    .course-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: var(--ink); }
+
+    .maplibregl-ctrl-group {
+      border: 0;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .maplibregl-ctrl-group button {
+      width: 36px;
+      height: 36px;
+    }
+
+    .maplibregl-ctrl-attrib {
+      font-family: Outfit, "Segoe UI", sans-serif;
+      font-size: 11px;
+      background: rgba(255, 253, 248, 0.92);
+    }
+
+    .banner {
+      position: fixed;
+      z-index: 1100;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      max-width: min(520px, calc(100% - 32px));
+      margin: 0;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #3d1f14;
+      color: white;
+      font-size: 14px;
+      line-height: 1.4;
+      box-shadow: var(--shadow);
+    }
+
+    .sr {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+
+    @media (max-width: 720px) {
+      .panel {
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        width: auto;
+        max-height: 46vh;
+      }
+
+      h1 { font-size: 24px; }
+      .distance { font-size: 34px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div id="map" role="application" aria-label="Street map of the Casablanca Marathon courses"></div>
+  <p class="loading" id="loading">Loading the street map…</p>
+
+  <aside class="panel" id="panel">
+    <header class="panel-head">
+      <div>
+        <p class="kicker">Casablanca Marathon</p>
+        <h1>2026 course</h1>
+      </div>
+      <button type="button" class="text-btn" id="collapse" aria-expanded="true" aria-controls="details">Map only</button>
+    </header>
+
+    <div class="switch" role="radiogroup" aria-label="Course distance">
+      <button type="button" role="radio" id="btn-21" data-route="21" aria-checked="false">
+        <b>21</b>
+        <span>km · half</span>
+      </button>
+      <button type="button" role="radio" id="btn-42" data-route="42" aria-checked="false">
+        <b>42</b>
+        <span>km · full</span>
+      </button>
+    </div>
+
+    <div class="details" id="details">
+      <p class="kind" id="kind"></p>
+      <p class="distance" id="distance"></p>
+      <p class="name" id="name"></p>
+      <dl class="facts">
+        <div>
+          <dt>Climb</dt>
+          <dd id="climb"></dd>
+        </div>
+        <div>
+          <dt>Shape</dt>
+          <dd id="shape"></dd>
+        </div>
+      </dl>
+      <figure class="elev">
+        <figcaption>Elevation</figcaption>
+        <svg id="spark" viewBox="0 0 280 46" preserveAspectRatio="none" role="img" aria-label="Elevation profile"></svg>
+        <div class="elev-scale">
+          <span id="ele-min"></span>
+          <span id="ele-max"></span>
+        </div>
+      </figure>
+      <p class="hint">Zoom in to read road, street, and alley names. The course line sits underneath the labels. Keys 1 and 2 switch the distance.</p>
+      <p class="file" id="file"></p>
+      <div class="actions">
+        <button type="button" id="fit">Show full course</button>
+      </div>
+      <p class="along" id="along">Follow the line to read distance and elevation.</p>
+    </div>
+  </aside>
+
+  <p class="banner" id="errors" hidden></p>
+  <p class="sr" id="live" aria-live="polite"></p>
+
+  <script src="https://unpkg.com/maplibre-gl@5.15.0/dist/maplibre-gl.js"></script>
+  <script src="routes.js"></script>
+  <script>
+    const FILES = {
+      "21": "casablanca-marathon-2026-21km.gpx",
+      "42": "casablanca-marathon-2026-42km.gpx"
+    };
+
+    const errors = document.getElementById("errors");
+    const loading = document.getElementById("loading");
+
+    function fail(message) {
+      errors.hidden = false;
+      errors.textContent = message;
+      loading.hidden = true;
+    }
+
+    if (location.protocol === "file:") {
+      fail("Open this page through a local server so the street map can load. In this folder, run: python -m http.server 8765");
+    }
+
+    if (!window.maplibregl || !window.ROUTES) {
+      fail("The map library or the course files did not load. Refresh the page once you are online.");
+    }
+
+    function haversine(a, b) {
+      const R = 6371000;
+      const toRad = Math.PI / 180;
+      const p1 = a[0] * toRad;
+      const p2 = b[0] * toRad;
+      const dp = (b[0] - a[0]) * toRad;
+      const dl = (b[1] - a[1]) * toRad;
+      const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    }
+
+    function prepare(route) {
+      const cum = [0];
+      let gain = 0;
+      for (let i = 1; i < route.points.length; i += 1) {
+        cum.push(cum[i - 1] + haversine(route.points[i - 1], route.points[i]));
+        gain += Math.max(0, route.points[i][2] - route.points[i - 1][2]);
+      }
+      const total = cum[cum.length - 1];
+      const loop = haversine(route.points[0], route.points[route.points.length - 1]) < 80;
+      return { ...route, cum, total, gain, loop };
+    }
+
+    const prepared = Object.fromEntries(
+      Object.entries(window.ROUTES || {}).map(([id, route]) => [id, prepare(route)])
+    );
+
+    function formatKm(meters) {
+      return (meters / 1000).toFixed(2) + " km";
+    }
+
+    function pointAt(route, meters) {
+      const { points, cum, total } = route;
+      if (meters <= 0) return { lat: points[0][0], lng: points[0][1], ele: points[0][2] };
+      if (meters >= total) {
+        const last = points[points.length - 1];
+        return { lat: last[0], lng: last[1], ele: last[2] };
+      }
+      let i = 1;
+      while (cum[i] < meters) i += 1;
+      const span = cum[i] - cum[i - 1] || 1;
+      const t = (meters - cum[i - 1]) / span;
+      const a = points[i - 1];
+      const b = points[i];
+      return {
+        lat: a[0] + (b[0] - a[0]) * t,
+        lng: a[1] + (b[1] - a[1]) * t,
+        ele: a[2] + (b[2] - a[2]) * t
+      };
+    }
+
+    function closest(lngLat, route) {
+      let best = Infinity;
+      let result = null;
+      const lat = lngLat.lat;
+      const lng = lngLat.lng;
+      for (let i = 1; i < route.points.length; i += 1) {
+        const a = route.points[i - 1];
+        const b = route.points[i];
+        const dx = b[1] - a[1];
+        const dy = b[0] - a[0];
+        const len2 = dx * dx + dy * dy;
+        let t = len2 === 0 ? 0 : ((lng - a[1]) * dx + (lat - a[0]) * dy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const plat = a[0] + dy * t;
+        const plng = a[1] + dx * t;
+        const cos = Math.cos(plat * Math.PI / 180);
+        const away = Math.hypot((lat - plat) * 111320, (lng - plng) * 111320 * cos);
+        if (away < best) {
+          best = away;
+          result = {
+            along: route.cum[i - 1] + t * (route.cum[i] - route.cum[i - 1]),
+            lat: plat,
+            lng: plng,
+            ele: a[2] + t * (b[2] - a[2])
+          };
+        }
+      }
+      return result;
+    }
+
+    function lineString(points) {
+      return {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "LineString",
+          coordinates: points.map((point) => [point[1], point[0]])
+        }
+      };
+    }
+
+    function drawSpark(route) {
+      const samples = 80;
+      const eles = [];
+      for (let i = 0; i < samples; i += 1) {
+        eles.push(pointAt(route, route.total * i / (samples - 1)).ele);
+      }
+      const min = Math.min(...eles);
+      const max = Math.max(...eles);
+      const span = max - min || 1;
+      const width = 280;
+      const height = 46;
+      const coords = eles.map((ele, index) => {
+        const x = (index / (samples - 1)) * width;
+        const y = 3 + (1 - (ele - min) / span) * (height - 6);
+        return [x, y];
+      });
+      const line = coords.map((pair, index) => `${index ? "L" : "M"}${pair[0].toFixed(1)} ${pair[1].toFixed(1)}`).join(" ");
+      const svg = document.getElementById("spark");
+      svg.innerHTML = `<path d="${line} L${width} ${height} L0 ${height} Z" fill="${route.color}" opacity="0.16"></path><path d="${line}" fill="none" stroke="${route.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>`;
+      document.getElementById("ele-min").textContent = Math.round(min) + " m";
+      document.getElementById("ele-max").textContent = Math.round(max) + " m";
+    }
+
+    const kindEl = document.getElementById("kind");
+    const distanceEl = document.getElementById("distance");
+    const nameEl = document.getElementById("name");
+    const climbEl = document.getElementById("climb");
+    const shapeEl = document.getElementById("shape");
+    const fileEl = document.getElementById("file");
+    const alongEl = document.getElementById("along");
+    const liveEl = document.getElementById("live");
+    const panel = document.getElementById("panel");
+
+    let activeId = null;
+    let map = null;
+    let popup = null;
+    let mapReady = false;
+    let pinned = false;
+    let hoverMarker = null;
+    let endMarkers = [];
+    let kmMarkers = [];
+
+    function updatePanel(route) {
+      document.documentElement.style.setProperty("--accent", route.color);
+      kindEl.textContent = route.title;
+      distanceEl.textContent = formatKm(route.total);
+      nameEl.textContent = route.name;
+      climbEl.textContent = "+" + Math.round(route.gain) + " m";
+      shapeEl.textContent = route.loop ? "Loop" : "Point to point";
+      fileEl.textContent = FILES[route.id];
+      drawSpark(route);
+      document.querySelectorAll(".switch button").forEach((button) => {
+        button.setAttribute("aria-checked", button.dataset.route === route.id ? "true" : "false");
+      });
+      document.title = route.label + " km · Casablanca Marathon 2026";
+      liveEl.textContent = "Showing the " + route.label + " km " + route.title.toLowerCase() + ", " + formatKm(route.total) + ".";
+      if (location.hash !== "#" + route.id) history.replaceState(null, "", "#" + route.id);
+    }
+
+    function resetAlong() {
+      alongEl.innerHTML = "Follow the line to read distance and elevation.";
+    }
+
+    function hideHover() {
+      if (hoverMarker) {
+        hoverMarker.remove();
+        hoverMarker = null;
+      }
+      if (popup) popup.remove();
+      if (map && map.getCanvas()) map.getCanvas().style.cursor = "";
+      resetAlong();
+    }
+
+    function showHover(info, isPinned) {
+      if (!hoverMarker) {
+        const el = document.createElement("div");
+        el.className = "hover-dot";
+        hoverMarker = new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([info.lng, info.lat]).addTo(map);
+      } else {
+        hoverMarker.setLngLat([info.lng, info.lat]);
+      }
+      popup
+        .setLngLat([info.lng, info.lat])
+        .setHTML(`<strong>${formatKm(info.along)}</strong><span>${Math.round(info.ele)} m elevation</span>`)
+        .addTo(map);
+      map.getCanvas().style.cursor = "crosshair";
+      const note = isPinned ? " Click the map to clear." : " Click to pin this point.";
+      alongEl.innerHTML = `<strong>${formatKm(info.along)}</strong> along the course · ${Math.round(info.ele)} m.${note}`;
+    }
+
+    function pixelDistance(info, point) {
+      const projected = map.project([info.lng, info.lat]);
+      return Math.hypot(projected.x - point.x, projected.y - point.y);
+    }
+
+    function clearMarkers(list) {
+      list.forEach((marker) => marker.remove());
+      list.length = 0;
+    }
+
+    function addMarker(list, lngLat, className, text, title, detail) {
+      const el = document.createElement("div");
+      el.className = className;
+      el.textContent = text;
+      el.setAttribute("aria-label", title);
+      const marker = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat(lngLat)
+        .setPopup(new maplibregl.Popup({ offset: 16, closeButton: false }).setHTML(`<strong>${title}</strong><span>${detail}</span>`))
+        .addTo(map);
+      list.push(marker);
+      return marker;
+    }
+
+    function placeEnds(route) {
+      clearMarkers(endMarkers);
+      const start = route.points[0];
+      const end = route.points[route.points.length - 1];
+      if (route.loop) {
+        addMarker(endMarkers, [start[1], start[0]], "end-mark", "S", "Start and finish", route.title);
+      } else {
+        addMarker(endMarkers, [start[1], start[0]], "end-mark", "S", "Start", route.title);
+        addMarker(endMarkers, [end[1], end[0]], "end-mark", "F", "Finish", route.title);
+      }
+    }
+
+    function kmStep(zoom) {
+      if (zoom < 13) return 5000;
+      if (zoom < 15) return 2000;
+      return 1000;
+    }
+
+    function placeKm(route) {
+      clearMarkers(kmMarkers);
+      if (!mapReady) return;
+      const step = kmStep(map.getZoom());
+      const occupied = endMarkers.map((marker) => map.project(marker.getLngLat()));
+      for (let meters = step; meters < route.total - 150; meters += step) {
+        const spot = pointAt(route, meters);
+        const point = map.project([spot.lng, spot.lat]);
+        const crowded = occupied.some((other) => Math.hypot(other.x - point.x, other.y - point.y) < 28);
+        if (crowded) continue;
+        occupied.push(point);
+        const km = Math.round(meters / 1000);
+        addMarker(kmMarkers, [spot.lng, spot.lat], "km-mark", String(km), km + " km", route.title);
+      }
+    }
+
+    function padding() {
+      const rect = panel.getBoundingClientRect();
+      if (window.innerWidth < 720) {
+        return { top: Math.round(rect.bottom + 16), bottom: 24, left: 16, right: 16 };
+      }
+      return { top: 24, bottom: 36, left: Math.round(rect.right + 16), right: 24 };
+    }
+
+    function fit(route) {
+      const bounds = new maplibregl.LngLatBounds();
+      route.points.forEach((point) => bounds.extend([point[1], point[0]]));
+      const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      map.fitBounds(bounds, { padding: padding(), maxZoom: 15, duration: motion ? 0 : 700 });
+    }
+
+    function draw(route) {
+      map.getSource("course").setData(lineString(route.points));
+      map.setPaintProperty("course-line", "line-color", route.color);
+      placeEnds(route);
+      placeKm(route);
+    }
+
+    function show(id) {
+      const route = prepared[id];
+      if (!route) return;
+      const changed = id !== activeId;
+      activeId = id;
+      pinned = false;
+      if (mapReady) hideHover();
+      else resetAlong();
+      updatePanel(route);
+      if (!mapReady) return;
+      draw(route);
+      if (changed) fit(route);
+    }
+
+    const initial = prepared[location.hash.replace("#", "")] ? location.hash.replace("#", "") : "21";
+    if (prepared[initial]) updatePanel(prepared[initial]);
+
+    if (window.maplibregl && window.ROUTES && location.protocol !== "file:") {
+    map = new maplibregl.Map({
+      container: "map",
+      style: "https://tiles.openfreemap.org/styles/liberty",
+      center: [-7.64, 33.59],
+      zoom: 12,
+      minZoom: 10,
+      maxZoom: 18,
+      maxPitch: 0,
+      attributionControl: false,
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false
+    });
+
+    map.touchZoomRotate.disableRotation();
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false, visualizePitch: false }), "bottom-right");
+    map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" }), "bottom-left");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+
+    popup = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 16,
+      anchor: "bottom",
+      className: "course-popup"
+    });
+
+    function addCourseLayer(layer, beforeId) {
+      if (beforeId && map.getLayer(beforeId)) map.addLayer(layer, beforeId);
+      else map.addLayer(layer);
+    }
+
+    function addArrowImage() {
+      const size = 48;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const g = canvas.getContext("2d");
+      g.translate(size / 2, size / 2);
+      g.beginPath();
+      g.moveTo(14, 0);
+      g.lineTo(-8, -11);
+      g.lineTo(-8, 11);
+      g.closePath();
+      g.lineWidth = 5;
+      g.lineJoin = "round";
+      g.strokeStyle = "#ffffff";
+      g.stroke();
+      g.fillStyle = "#1c1915";
+      g.fill();
+      if (!map.hasImage("course-arrow")) {
+        map.addImage("course-arrow", g.getImageData(0, 0, size, size), { pixelRatio: 2 });
+      }
+    }
+
+    map.on("load", () => {
+      const beforeId = "highway-name-path";
+      addArrowImage();
+      map.addSource("course", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+
+      const layout = { "line-cap": "round", "line-join": "round" };
+      addCourseLayer({
+        id: "course-shadow",
+        type: "line",
+        source: "course",
+        layout,
+        paint: {
+          "line-color": "#1c1915",
+          "line-opacity": 0.28,
+          "line-blur": 0.6,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 5, 14, 9, 17, 8]
+        }
+      }, beforeId);
+      addCourseLayer({
+        id: "course-casing",
+        type: "line",
+        source: "course",
+        layout,
+        paint: {
+          "line-color": "#fffdf8",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 4, 14, 7, 17, 6]
+        }
+      }, beforeId);
+      addCourseLayer({
+        id: "course-line",
+        type: "line",
+        source: "course",
+        layout,
+        paint: {
+          "line-color": "#0f6e56",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 2.5, 14, 4.2, 17, 3.4]
+        }
+      }, beforeId);
+      addCourseLayer({
+        id: "course-arrows",
+        type: "symbol",
+        source: "course",
+        minzoom: 14.5,
+        layout: {
+          "symbol-placement": "line",
+          "symbol-spacing": 110,
+          "icon-image": "course-arrow",
+          "icon-size": 0.55,
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-rotation-alignment": "map"
+        }
+      }, beforeId);
+
+      mapReady = true;
+      loading.hidden = true;
+      show(initial);
+    });
+
+    map.on("zoomend", () => {
+      if (mapReady && prepared[activeId]) placeKm(prepared[activeId]);
+    });
+
+    map.on("mousemove", (event) => {
+      if (!mapReady || pinned || !prepared[activeId]) return;
+      const info = closest(event.lngLat, prepared[activeId]);
+      if (!info || pixelDistance(info, event.point) > 16) {
+        if (hoverMarker) hideHover();
+        return;
+      }
+      showHover(info, false);
+    });
+
+    map.on("mouseout", () => {
+      if (!pinned) hideHover();
+    });
+
+    map.on("click", (event) => {
+      if (!mapReady || !prepared[activeId]) return;
+      const info = closest(event.lngLat, prepared[activeId]);
+      if (!info || pixelDistance(info, event.point) > 20) {
+        pinned = false;
+        hideHover();
+        return;
+      }
+      pinned = true;
+      showHover(info, true);
+    });
+
+    map.on("error", (event) => {
+      if (mapReady) return;
+      const message = String(event && event.error && event.error.message || "");
+      if (/style|ajax|fetch|failed|network/i.test(message)) {
+        fail("The street map could not be loaded. Check your connection and refresh.");
+      }
+    });
+
+    document.getElementById("btn-21").addEventListener("click", () => show("21"));
+    document.getElementById("btn-42").addEventListener("click", () => show("42"));
+    document.getElementById("fit").addEventListener("click", () => {
+      if (mapReady && prepared[activeId]) fit(prepared[activeId]);
+    });
+
+    document.getElementById("collapse").addEventListener("click", () => {
+      const collapsed = panel.classList.toggle("is-collapsed");
+      const button = document.getElementById("collapse");
+      button.setAttribute("aria-expanded", String(!collapsed));
+      button.textContent = collapsed ? "Details" : "Map only";
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target.closest("input, textarea")) return;
+      if (event.key === "1") show("21");
+      if (event.key === "2") show("42");
+    });
+
+    window.addEventListener("resize", () => map.resize());
+    }
+  </script>
+</body>
+</html>
