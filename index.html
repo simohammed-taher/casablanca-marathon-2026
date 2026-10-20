@@ -258,8 +258,7 @@
       margin-top: 12px;
     }
 
-    .actions button,
-    .actions a.maps-link {
+    .actions button {
       border: 0;
       border-radius: 999px;
       padding: 8px 14px;
@@ -269,11 +268,9 @@
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      text-decoration: none;
     }
 
-    .actions button:hover,
-    .actions a.maps-link:hover { background: #322c26; }
+    .actions button:hover { background: #322c26; }
 
     #track {
       background: var(--accent);
@@ -283,15 +280,13 @@
       background: var(--ink);
     }
 
-    .actions button.ghost,
-    .actions a.maps-link {
+    .actions button.ghost {
       background: transparent;
       color: var(--ink);
       box-shadow: inset 0 0 0 1.5px rgba(28, 25, 21, 0.18);
     }
 
-    .actions button.ghost:hover,
-    .actions a.maps-link:hover { background: var(--paper); }
+    .actions button.ghost:hover { background: var(--paper); }
 
     .along {
       margin: 12px 0 0;
@@ -332,12 +327,6 @@
       font-weight: 560;
       letter-spacing: -0.03em;
       line-height: 1;
-    }
-
-    .deviation p {
-      margin: 6px 0 0;
-      font-size: 16px;
-      line-height: 1.35;
     }
 
     .panel.is-collapsed .details { display: none; }
@@ -518,8 +507,7 @@
       .switch button { min-height: 48px; padding: 6px 8px 5px; }
       .switch button b { font-size: 24px; }
       .actions { margin-top: 8px; }
-      .actions button,
-      .actions a.maps-link { min-height: 44px; padding: 8px 14px; }
+      .actions button { min-height: 44px; padding: 8px 14px; }
       .along {
         margin-top: 8px;
         padding-top: 8px;
@@ -587,7 +575,6 @@
       <button type="button" id="track" aria-pressed="false">Guide me</button>
       <button type="button" id="recenter" class="ghost" hidden>Recenter</button>
       <button type="button" class="ghost" id="collapse" aria-expanded="true" aria-controls="details">Map only</button>
-      <a id="google-maps" class="maps-link" href="https://www.google.com/maps/dir/?api=1&amp;travelmode=walking" target="_blank" rel="noopener noreferrer">Google Maps</a>
     </div>
     <p class="along" id="along">Guide me to follow the course from your location.</p>
 
@@ -623,7 +610,6 @@
 
   <div id="deviation" class="deviation" hidden role="alert" aria-live="assertive">
     <h2>You've left the route</h2>
-    <p id="deviation-detail"></p>
   </div>
 
   <p class="banner" id="errors" hidden></p>
@@ -835,77 +821,6 @@
       liveEl.textContent = "Showing the " + route.label + " km " + route.title.toLowerCase() + ", " + formatKm(route.total) + ".";
       if (location.hash !== "#" + route.id) history.replaceState(null, "", "#" + route.id);
       renderStatus();
-      refreshGoogleLink(route);
-    }
-
-    function perpendicularDistance(point, start, end) {
-      const dx = end[1] - start[1];
-      const dy = end[0] - start[0];
-      const length = Math.hypot(dx, dy) || 1;
-      return Math.abs(dy * point[1] - dx * point[0] + end[1] * start[0] - end[0] * start[1]) / length;
-    }
-
-    function douglasPeucker(points, epsilon) {
-      if (points.length < 3) return points.slice();
-      let maxDistance = 0;
-      let index = 0;
-      const last = points.length - 1;
-      for (let i = 1; i < last; i += 1) {
-        const distance = perpendicularDistance(points[i], points[0], points[last]);
-        if (distance > maxDistance) {
-          maxDistance = distance;
-          index = i;
-        }
-      }
-      if (maxDistance <= epsilon) return [points[0], points[last]];
-      const left = douglasPeucker(points.slice(0, index + 1), epsilon);
-      const right = douglasPeucker(points.slice(index), epsilon);
-      return left.slice(0, -1).concat(right);
-    }
-
-    function simplifyTo(points, maxStops) {
-      if (points.length <= maxStops) return points.slice();
-      let pool = douglasPeucker(points, 0.00018);
-      if (pool.length < maxStops) pool = points;
-      const result = [];
-      const last = pool.length - 1;
-      for (let i = 0; i < maxStops; i += 1) {
-        result.push(pool[Math.round((i * last) / (maxStops - 1))]);
-      }
-      return result;
-    }
-
-    function googleMapsUrl(route) {
-      const mobile = window.matchMedia("(max-width: 720px)").matches
-        || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      const maxStops = mobile ? 5 : 11;
-      let source = route.points.map((point) => [point[0], point[1]]);
-      if (liveGuide && liveGuide.along > 40 && liveGuide.along < route.total - 80) {
-        const here = pointAt(route, liveGuide.along);
-        source = [[here.lat, here.lng]];
-        route.points.forEach((point, index) => {
-          if (route.cum[index] > liveGuide.along + 25) source.push([point[0], point[1]]);
-        });
-      }
-      const stops = simplifyTo(source, maxStops);
-      const format = (point) => point[0].toFixed(5) + "," + point[1].toFixed(5);
-      const params = new URLSearchParams({
-        api: "1",
-        origin: format(stops[0]),
-        destination: format(stops[stops.length - 1]),
-        travelmode: "walking"
-      });
-      const waypoints = stops.slice(1, -1).map(format).join("|");
-      const url = "https://www.google.com/maps/dir/?" + params.toString();
-      return waypoints ? url + "&waypoints=" + encodeURIComponent(waypoints) : url;
-    }
-
-    function refreshGoogleLink(route) {
-      const current = route || prepared[activeId];
-      const link = document.getElementById("google-maps");
-      if (!current || !link) return;
-      link.href = googleMapsUrl(current);
-      link.setAttribute("aria-label", "Open the " + current.label + " km course in Google Maps");
     }
 
     function resetAlong() {
@@ -925,11 +840,6 @@
       while (delta > 180) delta -= 360;
       while (delta < -180) delta += 360;
       return delta;
-    }
-
-    function cardinal(degrees) {
-      const names = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
-      return names[Math.round((((degrees % 360) + 360) % 360) / 45) % 8];
     }
 
     function routeBearing(route, along, aheadMeters) {
@@ -953,18 +863,6 @@
       return { type: "straight" };
     }
 
-    function returnText(user, snap, heading) {
-      const meters = Math.max(1, Math.round(snap.away));
-      const back = bearingOf(user, { lat: snap.lat, lng: snap.lng });
-      if (heading == null) return "The course is " + meters + " m to the " + cardinal(back) + ".";
-      const relative = angleDelta(heading, back);
-      let side = "ahead";
-      if (relative > 150 || relative < -150) side = "behind you";
-      else if (relative > 25) side = "to your right";
-      else if (relative < -25) side = "to your left";
-      return "The course is " + meters + " m " + side + ".";
-    }
-
     function sayOnce(key, text, vibrate) {
       if (spokenKey === key) return;
       spokenKey = key;
@@ -976,16 +874,13 @@
       window.speechSynthesis.speak(utterance);
     }
 
-    function showDeviation(detail) {
-      const box = document.getElementById("deviation");
-      box.hidden = false;
-      document.getElementById("deviation-detail").textContent = detail;
+    function showDeviation() {
+      document.getElementById("deviation").hidden = false;
       panel.classList.add("is-off");
     }
 
     function hideDeviation() {
       document.getElementById("deviation").hidden = true;
-      document.getElementById("deviation-detail").textContent = "";
       panel.classList.remove("is-off");
     }
 
@@ -1006,28 +901,21 @@
     }
 
     function renderGuide(route, instruction) {
-      const left = Math.max(0, route.total - liveGuide.along);
       drawSpark(route);
+      kindEl.textContent = route.title;
+      distanceEl.textContent = formatKm(route.total);
       if (offRoute) {
-        kindEl.textContent = "Off the route";
-        distanceEl.textContent = Math.round(liveGuide.away) + " m";
-        alongEl.innerHTML = "<strong>You've left the route.</strong> " + document.getElementById("deviation-detail").textContent;
+        alongEl.textContent = "You've left the route.";
         return;
       }
       if (instruction.type === "around") {
-        kindEl.textContent = "Wrong way";
-        distanceEl.textContent = "Turn around";
-        alongEl.textContent = "The course continues the other way.";
+        alongEl.textContent = "Turn around. The course continues the other way.";
         return;
       }
       if (instruction.type === "turn") {
-        kindEl.textContent = "Turn " + instruction.direction;
-        distanceEl.textContent = instruction.distance + " m";
-        alongEl.innerHTML = `<strong>${formatKm(left)}</strong> left on the course.`;
+        alongEl.textContent = "Turn " + instruction.direction + " ahead.";
         return;
       }
-      kindEl.textContent = "Continue";
-      distanceEl.textContent = formatKm(left);
       alongEl.textContent = "Stay on the colored line.";
     }
 
@@ -1107,6 +995,7 @@
     }
 
     let lastFollowAt = 0;
+    let courseFramed = false;
 
     function movementHeading(position) {
       const speed = position.coords.speed;
@@ -1124,22 +1013,23 @@
 
     function followUser() {
       if (!follow || !mapReady || !liveGuide) return;
+      const route = prepared[activeId];
+      if (!route) return;
       const now = Date.now();
       if (now - lastFollowAt < 700) return;
       lastFollowAt = now;
       const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (liveGuide.away > 80) {
-        const bounds = new maplibregl.LngLatBounds(
-          [liveGuide.lng, liveGuide.lat],
-          [liveGuide.snapLng, liveGuide.snapLat]
-        );
-        map.fitBounds(bounds, { padding: 90, maxZoom: 16, duration: motion ? 0 : 600 });
+      const reliable = liveGuide.away <= 80 && (liveGuide.accuracy == null || liveGuide.accuracy <= 40);
+      if (!reliable) {
+        if (!courseFramed) fit(route);
         return;
       }
+      courseFramed = false;
       map.easeTo({
-        center: [liveGuide.lng, liveGuide.lat],
-        bearing: liveGuide.heading == null ? map.getBearing() : liveGuide.heading,
-        zoom: Math.max(map.getZoom(), 16.5),
+        center: [liveGuide.snapLng, liveGuide.snapLat],
+        bearing: 0,
+        zoom: Math.max(map.getZoom(), 15.4),
+        padding: padding(),
         duration: motion ? 0 : 650,
         essential: true
       });
@@ -1168,7 +1058,8 @@
         away: snap.away,
         snapLat: snap.lat,
         snapLng: snap.lng,
-        heading
+        heading,
+        accuracy
       };
       if (mapReady) {
         paintProgress(route);
@@ -1184,19 +1075,18 @@
       }
       const instruction = offRoute ? { type: "straight" } : nextInstruction(route, snap.along, heading);
       lastInstruction = instruction;
-      const detail = returnText(user, snap, heading);
       if (offRoute && !wasOff) {
-        showDeviation(detail);
-        sayOnce("off", "You've left the route. " + detail, [200, 100, 200, 100, 200]);
+        showDeviation();
+        sayOnce("off", "You've left the route.", [200, 100, 200, 100, 200]);
       } else if (!offRoute && wasOff) {
         hideDeviation();
         sayOnce("on", "You're back on the route.", 80);
       } else if (offRoute) {
-        showDeviation(detail);
+        showDeviation();
       } else if (instruction.type === "turn" && instruction.distance <= 100) {
         sayOnce(
-          "turn-" + route.id + "-" + Math.round((snap.along + instruction.distance) / 30),
-          "Turn " + instruction.direction + " in " + instruction.distance + " meters"
+          "turn-" + route.id + "-" + instruction.direction + "-" + Math.round(snap.along / 80),
+          "Turn " + instruction.direction
         );
       } else if (instruction.type === "around") {
         sayOnce("around", "Turn around. You are going the wrong way on the course.", [120, 80, 120]);
@@ -1235,6 +1125,7 @@
       hideDeviation();
       updateTrackButtons();
       renderStatus();
+      if (mapReady && prepared[activeId]) fit(prepared[activeId]);
       watchId = navigator.geolocation.watchPosition(onFix, onGeoError, {
         enableHighAccuracy: true,
         maximumAge: 1000,
@@ -1262,7 +1153,7 @@
       if (mapReady && map.getSource("return-path")) map.getSource("return-path").setData(emptyLine());
       if (mapReady && prepared[activeId]) {
         paintProgress(prepared[activeId]);
-        map.easeTo({ bearing: 0, duration: 300 });
+        fit(prepared[activeId]);
       }
       updateTrackButtons();
       renderStatus();
@@ -1365,7 +1256,8 @@
       const bounds = new maplibregl.LngLatBounds();
       route.points.forEach((point) => bounds.extend([point[1], point[0]]));
       const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      map.fitBounds(bounds, { padding: padding(), maxZoom: 15, duration: motion ? 0 : 700 });
+      courseFramed = true;
+      map.fitBounds(bounds, { padding: padding(), maxZoom: 15, bearing: 0, duration: motion ? 0 : 700 });
     }
 
     function draw(route) {
@@ -1393,8 +1285,9 @@
         hideDeviation();
         pathHistory = [];
       }
-      if (changed && !(tracking && follow)) fit(route);
-      if (changed && tracking && follow) followUser();
+      const onCourse = tracking && follow && liveGuide && liveGuide.away <= 80;
+      if (onCourse) followUser();
+      else fit(route);
     }
 
     const initial = prepared[location.hash.replace("#", "")] ? location.hash.replace("#", "") : "21";
@@ -1610,10 +1503,6 @@
       follow = false;
       updateTrackButtons();
       if (mapReady && prepared[activeId]) fit(prepared[activeId]);
-    });
-
-    document.getElementById("google-maps").addEventListener("click", () => {
-      refreshGoogleLink();
     });
 
     document.getElementById("track").addEventListener("click", () => {
