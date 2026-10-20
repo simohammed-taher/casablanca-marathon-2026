@@ -292,6 +292,38 @@
       font-weight: 560;
     }
 
+    .panel.is-off { border-top-color: #9a3412; }
+
+    .deviation {
+      position: fixed;
+      z-index: 1200;
+      left: 16px;
+      right: 16px;
+      bottom: 24px;
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 16px 18px;
+      border-radius: 16px;
+      background: #9a3412;
+      color: white;
+      box-shadow: var(--shadow);
+    }
+
+    .deviation h2 {
+      margin: 0;
+      font-family: Fraunces, Georgia, serif;
+      font-size: 28px;
+      font-weight: 560;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+
+    .deviation p {
+      margin: 6px 0 0;
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
     .panel.is-collapsed .details { display: none; }
 
     .panel.is-collapsed { width: min(336px, calc(100vw - 32px)); }
@@ -486,10 +518,10 @@
     </div>
 
     <div class="actions">
-      <button type="button" id="track" aria-pressed="false">Track me</button>
+      <button type="button" id="track" aria-pressed="false">Guide me</button>
       <button type="button" id="recenter" class="ghost" hidden>Recenter</button>
     </div>
-    <p class="along" id="along">Follow the line to read distance and elevation.</p>
+    <p class="along" id="along">Guide me to follow the course from your location.</p>
 
     <div class="details" id="details">
       <p class="kind" id="kind"></p>
@@ -513,14 +545,18 @@
           <span id="ele-max"></span>
         </div>
       </figure>
-      <p class="hint">Track me follows the course from where you are. The line ahead moves with you, and it stays put when you stop.</p>
+      <p class="hint">Guide me follows your location along the course. If you leave the route, the map warns you and points you back.</p>
       <p class="file" id="file"></p>
       <div class="actions">
         <button type="button" id="fit" class="ghost">Show full course</button>
-        <button type="button" id="reset-progress" class="ghost" hidden>Start over</button>
       </div>
     </div>
   </aside>
+
+  <div id="deviation" class="deviation" hidden role="alert" aria-live="assertive">
+    <h2>You've left the route</h2>
+    <p id="deviation-detail"></p>
+  </div>
 
   <p class="banner" id="errors" hidden></p>
   <p class="sr" id="live" aria-live="polite"></p>
@@ -594,6 +630,11 @@
 
     let progress = loadProgress();
     let tracking = false;
+    let liveGuide = null;
+    let offRoute = false;
+    let lastInstruction = { type: "straight" };
+    let pathHistory = [];
+    let spokenKey = "";
     let follow = false;
     let watchId = null;
     let wakeLock = null;
@@ -683,9 +724,8 @@
       });
       const line = coords.map((pair, index) => `${index ? "L" : "M"}${pair[0].toFixed(1)} ${pair[1].toFixed(1)}`).join(" ");
       const svg = document.getElementById("spark");
-      const saved = progress[route.id];
-      const mark = saved && saved.along > 0
-        ? `<line x1="${((saved.along / route.total) * width).toFixed(1)}" y1="0" x2="${((saved.along / route.total) * width).toFixed(1)}" y2="${height}" stroke="${route.color}" stroke-width="1.5"></line>`
+      const mark = tracking && liveGuide && liveGuide.along > 0
+        ? `<line x1="${((liveGuide.along / route.total) * width).toFixed(1)}" y1="0" x2="${((liveGuide.along / route.total) * width).toFixed(1)}" y2="${height}" stroke="${route.color}" stroke-width="1.5"></line>`
         : "";
       svg.innerHTML = `<path d="${line} L${width} ${height} L0 ${height} Z" fill="${route.color}" opacity="0.16"></path><path d="${line}" fill="none" stroke="${route.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>${mark}`;
       document.getElementById("ele-min").textContent = Math.round(min) + " m";
@@ -733,46 +773,123 @@
       renderStatus();
     }
 
+    function bearingOf(a, b) {
+      const toRad = Math.PI / 180;
+      const y = Math.sin((b.lng - a.lng) * toRad) * Math.cos(b.lat * toRad);
+      const x = Math.cos(a.lat * toRad) * Math.sin(b.lat * toRad)
+        - Math.sin(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.cos((b.lng - a.lng) * toRad);
+      return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    function angleDelta(from, to) {
+      let delta = to - from;
+      while (delta > 180) delta -= 360;
+      while (delta < -180) delta += 360;
+      return delta;
+    }
+
+    function cardinal(degrees) {
+      const names = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+      return names[Math.round((((degrees % 360) + 360) % 360) / 45) % 8];
+    }
+
+    function routeBearing(route, along, aheadMeters) {
+      const from = pointAt(route, along);
+      const to = pointAt(route, Math.min(route.total, along + aheadMeters));
+      return bearingOf(from, to);
+    }
+
+    function nextInstruction(route, along, heading) {
+      const ahead = routeBearing(route, along, 35);
+      if (heading != null && Math.abs(angleDelta(heading, ahead)) > 130) return { type: "around" };
+      let previous = ahead;
+      for (let distance = 40; distance <= 160; distance += 20) {
+        const sample = routeBearing(route, Math.min(route.total - 1, along + distance), 30);
+        const delta = angleDelta(previous, sample);
+        if (Math.abs(delta) >= 45) {
+          return { type: "turn", direction: delta > 0 ? "right" : "left", distance };
+        }
+        previous = sample;
+      }
+      return { type: "straight" };
+    }
+
+    function returnText(user, snap, heading) {
+      const meters = Math.max(1, Math.round(snap.away));
+      const back = bearingOf(user, { lat: snap.lat, lng: snap.lng });
+      if (heading == null) return "The course is " + meters + " m to the " + cardinal(back) + ".";
+      const relative = angleDelta(heading, back);
+      let side = "ahead";
+      if (relative > 150 || relative < -150) side = "behind you";
+      else if (relative > 25) side = "to your right";
+      else if (relative < -25) side = "to your left";
+      return "The course is " + meters + " m " + side + ".";
+    }
+
+    function sayOnce(key, text, vibrate) {
+      if (spokenKey === key) return;
+      spokenKey = key;
+      if (vibrate && navigator.vibrate) navigator.vibrate(vibrate);
+      if (!window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-US";
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function showDeviation(detail) {
+      const box = document.getElementById("deviation");
+      box.hidden = false;
+      document.getElementById("deviation-detail").textContent = detail;
+      panel.classList.add("is-off");
+    }
+
+    function hideDeviation() {
+      document.getElementById("deviation").hidden = true;
+      document.getElementById("deviation-detail").textContent = "";
+      panel.classList.remove("is-off");
+    }
+
     function renderStatus() {
       const route = prepared[activeId];
-      const resetButton = document.getElementById("reset-progress");
       if (!route) return;
-      const saved = progress[route.id];
-      if (resetButton) resetButton.hidden = !(saved && saved.along > 1);
-      if (!saved || saved.along == null) {
+      if (!tracking || !liveGuide) {
         kindEl.textContent = route.title;
         distanceEl.textContent = formatKm(route.total);
         if (!hoverMarker && !pinned) {
           alongEl.textContent = tracking
-            ? "Looking for you on the course…"
-            : "Follow the line to read distance and elevation.";
+            ? "Finding your location…"
+            : "Guide me to follow the course from your location.";
         }
         return;
       }
-      const left = Math.max(0, route.total - saved.along);
-      const off = saved.away > 65;
-      kindEl.textContent = tracking ? "Remaining" : "Stopped at";
-      distanceEl.textContent = tracking ? formatKm(left) : formatKm(saved.along);
-      drawSpark(route);
-      if (hoverMarker || pinned) return;
-      if (tracking && off) {
-        alongEl.innerHTML = `<strong>Stopped at ${formatKm(saved.along)}</strong> You are ${Math.round(saved.away)} m off the course.`;
-      } else if (tracking) {
-        alongEl.innerHTML = `<strong>${formatKm(left)}</strong> left · ${formatKm(saved.along)} done.`;
-      } else {
-        alongEl.innerHTML = `<strong>Stopped at ${formatKm(saved.along)}</strong> ${formatKm(left)} left. Track me to continue.`;
-      }
+      renderGuide(route, lastInstruction);
     }
 
-    function resolveAlong(previous, snap, total) {
-      if (!snap || snap.away > 65) return previous == null ? null : previous;
-      if (previous == null) return snap.along;
-      if (previous > total * 0.9 && snap.along < total * 0.1) return total;
-      let delta = snap.along - previous;
-      if (delta > total / 2) delta -= total;
-      if (delta < -total / 2) delta += total;
-      if (delta < -25) return previous;
-      return snap.along;
+    function renderGuide(route, instruction) {
+      const left = Math.max(0, route.total - liveGuide.along);
+      drawSpark(route);
+      if (offRoute) {
+        kindEl.textContent = "Off the route";
+        distanceEl.textContent = Math.round(liveGuide.away) + " m";
+        alongEl.innerHTML = "<strong>You've left the route.</strong> " + document.getElementById("deviation-detail").textContent;
+        return;
+      }
+      if (instruction.type === "around") {
+        kindEl.textContent = "Wrong way";
+        distanceEl.textContent = "Turn around";
+        alongEl.textContent = "The course continues the other way.";
+        return;
+      }
+      if (instruction.type === "turn") {
+        kindEl.textContent = "Turn " + instruction.direction;
+        distanceEl.textContent = instruction.distance + " m";
+        alongEl.innerHTML = `<strong>${formatKm(left)}</strong> left on the course.`;
+        return;
+      }
+      kindEl.textContent = "Continue";
+      distanceEl.textContent = formatKm(left);
+      alongEl.textContent = "Stay on the colored line.";
     }
 
     function sliceLine(route, from, to) {
@@ -799,34 +916,31 @@
 
     function paintProgress(route) {
       if (!mapReady || !map.getSource("remaining")) return;
-      const saved = progress[route.id];
-      const active = saved && saved.along > 1 && saved.along < route.total - 1;
+      const active = tracking && liveGuide && liveGuide.along > 1 && liveGuide.along < route.total - 1;
       map.setPaintProperty("course-line", "line-opacity", active ? 0.18 : 1);
-      map.getSource("done").setData(active ? sliceLine(route, 0, saved.along) : emptyLine());
-      map.getSource("remaining").setData(active ? sliceLine(route, saved.along, route.total) : emptyLine());
+      map.getSource("done").setData(active ? sliceLine(route, 0, liveGuide.along) : emptyLine());
+      map.getSource("remaining").setData(active ? sliceLine(route, liveGuide.along, route.total) : emptyLine());
       map.setPaintProperty("remaining-line", "line-color", route.color);
-      placeYou(route);
+      placeYou();
     }
 
-    function placeYou(route) {
-      const saved = progress[route.id];
-      if (!saved || saved.along == null || !mapReady) {
+    function placeYou() {
+      if (!tracking || !liveGuide || !mapReady) {
         if (youMarker) {
           youMarker.remove();
           youMarker = null;
         }
         return;
       }
-      const spot = pointAt(route, saved.along);
       if (!youMarker) {
         const el = document.createElement("div");
         el.className = "you-mark";
-        el.setAttribute("aria-label", "Where you stopped on the course");
+        el.setAttribute("aria-label", "Your location");
         youMarker = new maplibregl.Marker({ element: el, anchor: "center" })
-          .setLngLat([spot.lng, spot.lat])
+          .setLngLat([liveGuide.lng, liveGuide.lat])
           .addTo(map);
       } else {
-        youMarker.setLngLat([spot.lng, spot.lat]);
+        youMarker.setLngLat([liveGuide.lng, liveGuide.lat]);
       }
     }
 
@@ -834,7 +948,7 @@
       const button = document.getElementById("track");
       const recenter = document.getElementById("recenter");
       button.setAttribute("aria-pressed", tracking ? "true" : "false");
-      button.textContent = tracking ? "Stop" : "Track me";
+      button.textContent = tracking ? "Stop guiding" : "Guide me";
       recenter.hidden = !(tracking && !follow);
     }
 
@@ -855,17 +969,38 @@
 
     let lastFollowAt = 0;
 
-    function followSpot(route) {
-      const saved = progress[route.id];
-      if (!follow || !mapReady || !saved || saved.along == null) return;
+    function movementHeading(position) {
+      const speed = position.coords.speed;
+      if (typeof position.coords.heading === "number" && !Number.isNaN(position.coords.heading) && speed > 0.6) {
+        return position.coords.heading;
+      }
+      pathHistory.push({ lat: position.coords.latitude, lng: position.coords.longitude });
+      if (pathHistory.length > 5) pathHistory.shift();
+      if (pathHistory.length < 2) return null;
+      const start = pathHistory[0];
+      const end = pathHistory[pathHistory.length - 1];
+      if (haversine([start.lat, start.lng], [end.lat, end.lng]) < 8) return null;
+      return bearingOf(start, end);
+    }
+
+    function followUser() {
+      if (!follow || !mapReady || !liveGuide) return;
       const now = Date.now();
       if (now - lastFollowAt < 700) return;
       lastFollowAt = now;
-      const spot = pointAt(route, saved.along);
       const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (liveGuide.away > 80) {
+        const bounds = new maplibregl.LngLatBounds(
+          [liveGuide.lng, liveGuide.lat],
+          [liveGuide.snapLng, liveGuide.snapLat]
+        );
+        map.fitBounds(bounds, { padding: 90, maxZoom: 16, duration: motion ? 0 : 600 });
+        return;
+      }
       map.easeTo({
-        center: [spot.lng, spot.lat],
-        zoom: Math.max(map.getZoom(), 16),
+        center: [liveGuide.lng, liveGuide.lat],
+        bearing: liveGuide.heading == null ? map.getBearing() : liveGuide.heading,
+        zoom: Math.max(map.getZoom(), 16.5),
         duration: motion ? 0 : 650,
         essential: true
       });
@@ -874,49 +1009,71 @@
     function onFix(position) {
       const route = prepared[activeId];
       if (!route) return;
-      const poorFix = position.coords.accuracy > 80;
-      const previous = progress[route.id] ? progress[route.id].along : null;
-      if (poorFix) {
-        alongEl.innerHTML = previous == null
-          ? "Waiting for a sharper location fix…"
-          : `<strong>Stopped at ${formatKm(previous)}</strong> Waiting for a sharper location fix…`;
+      const accuracy = position.coords.accuracy;
+      if (accuracy > 80) {
+        alongEl.textContent = "Waiting for a sharper location fix…";
         return;
       }
-      const snap = closest(
-        { lat: position.coords.latitude, lng: position.coords.longitude },
-        route
-      );
-      const along = resolveAlong(previous, snap, route.total);
-      if (along == null) {
-        if (!hoverMarker && !pinned) alongEl.textContent = "Move onto the course to start tracking from where you are.";
-        return;
+      const user = { lat: position.coords.latitude, lng: position.coords.longitude };
+      const snap = closest(user, route);
+      const heading = movementHeading(position);
+      const wasOff = offRoute;
+      if (!(accuracy > 30)) {
+        if (!offRoute && snap.away > 40) offRoute = true;
+        else if (offRoute && snap.away < 22) offRoute = false;
       }
-      const spot = pointAt(route, along);
-      progress[route.id] = {
-        along,
-        lat: spot.lat,
-        lng: spot.lng,
-        ele: spot.ele,
+      liveGuide = {
+        lat: user.lat,
+        lng: user.lng,
+        along: snap.along,
         away: snap.away,
-        updated: Date.now()
+        snapLat: snap.lat,
+        snapLng: snap.lng,
+        heading
       };
-      saveProgress();
-      if (mapReady) paintProgress(route);
-      renderStatus();
-      followSpot(route);
+      if (mapReady) {
+        paintProgress(route);
+        const backLine = offRoute ? {
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "LineString",
+            coordinates: [[user.lng, user.lat], [snap.lng, snap.lat]]
+          }
+        } : emptyLine();
+        if (map.getSource("return-path")) map.getSource("return-path").setData(backLine);
+      }
+      const instruction = offRoute ? { type: "straight" } : nextInstruction(route, snap.along, heading);
+      lastInstruction = instruction;
+      const detail = returnText(user, snap, heading);
+      if (offRoute && !wasOff) {
+        showDeviation(detail);
+        sayOnce("off", "You've left the route. " + detail, [200, 100, 200, 100, 200]);
+      } else if (!offRoute && wasOff) {
+        hideDeviation();
+        sayOnce("on", "You're back on the route.", 80);
+      } else if (offRoute) {
+        showDeviation(detail);
+      } else if (instruction.type === "turn" && instruction.distance <= 100) {
+        sayOnce(
+          "turn-" + route.id + "-" + Math.round((snap.along + instruction.distance) / 30),
+          "Turn " + instruction.direction + " in " + instruction.distance + " meters"
+        );
+      } else if (instruction.type === "around") {
+        sayOnce("around", "Turn around. You are going the wrong way on the course.", [120, 80, 120]);
+      }
+      if (instruction.type !== "around" && spokenKey === "around") spokenKey = "";
+      renderGuide(route, instruction);
+      followUser();
     }
 
     function onGeoError(error) {
       if (error && error.code === 1) {
         stopTracking();
-        alongEl.textContent = "Location is blocked. Allow location for this site, then press Track me again.";
+        alongEl.textContent = "Location is blocked. Allow location for this site, then press Guide me again.";
         return;
       }
-      const route = prepared[activeId];
-      const saved = route && progress[route.id];
-      alongEl.innerHTML = saved
-        ? `<strong>Stopped at ${formatKm(saved.along)}</strong> Waiting for a location fix…`
-        : "Waiting for a location fix…";
+      alongEl.textContent = "Waiting for a location fix…";
     }
 
     function startTracking() {
@@ -924,10 +1081,19 @@
         alongEl.textContent = "This browser cannot read your location.";
         return;
       }
+      if (!window.isSecureContext) {
+        alongEl.textContent = "Location guidance needs the secure Vercel address, not a file saved on the phone.";
+        return;
+      }
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
       tracking = true;
       follow = true;
+      offRoute = false;
+      liveGuide = null;
+      pathHistory = [];
+      spokenKey = "";
       lastFollowAt = 0;
+      hideDeviation();
       updateTrackButtons();
       renderStatus();
       watchId = navigator.geolocation.watchPosition(onFix, onGeoError, {
@@ -936,31 +1102,30 @@
         timeout: 20000
       });
       keepAwake();
-      const route = prepared[activeId];
-      if (route && progress[route.id] && mapReady) followSpot(route);
     }
 
     function stopTracking() {
       tracking = false;
       follow = false;
+      offRoute = false;
+      liveGuide = null;
+      pathHistory = [];
       if (watchId != null && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
       }
       releaseAwake();
-      updateTrackButtons();
-      renderStatus();
-    }
-
-    function clearProgress() {
-      if (!activeId) return;
-      delete progress[activeId];
-      saveProgress();
+      hideDeviation();
       if (youMarker) {
         youMarker.remove();
         youMarker = null;
       }
-      if (mapReady && prepared[activeId]) paintProgress(prepared[activeId]);
+      if (mapReady && map.getSource("return-path")) map.getSource("return-path").setData(emptyLine());
+      if (mapReady && prepared[activeId]) {
+        paintProgress(prepared[activeId]);
+        map.easeTo({ bearing: 0, duration: 300 });
+      }
+      updateTrackButtons();
       renderStatus();
     }
 
@@ -1082,8 +1247,14 @@
       updatePanel(route);
       if (!mapReady) return;
       draw(route);
+      if (changed && tracking) {
+        liveGuide = null;
+        offRoute = false;
+        hideDeviation();
+        pathHistory = [];
+      }
       if (changed && !(tracking && follow)) fit(route);
-      if (changed && tracking && follow) followSpot(route);
+      if (changed && tracking && follow) followUser();
     }
 
     const initial = prepared[location.hash.replace("#", "")] ? location.hash.replace("#", "") : "21";
@@ -1185,6 +1356,18 @@
       }, beforeId);
       map.addSource("done", { type: "geojson", data: emptyLine() });
       map.addSource("remaining", { type: "geojson", data: emptyLine() });
+      map.addSource("return-path", { type: "geojson", data: emptyLine() });
+      addCourseLayer({
+        id: "return-path",
+        type: "line",
+        source: "return-path",
+        layout,
+        paint: {
+          "line-color": "#9a3412",
+          "line-width": 3,
+          "line-dasharray": [1.4, 1.2]
+        }
+      }, beforeId);
       addCourseLayer({
         id: "done-line",
         type: "line",
@@ -1298,11 +1481,7 @@
       follow = true;
       lastFollowAt = 0;
       updateTrackButtons();
-      if (prepared[activeId]) followSpot(prepared[activeId]);
-    });
-
-    document.getElementById("reset-progress").addEventListener("click", () => {
-      clearProgress();
+      followUser();
     });
 
     document.addEventListener("visibilitychange", () => {
