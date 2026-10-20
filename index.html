@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f6e56">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Casa 2026">
   <title>Casablanca Marathon 2026 — Course map</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,640&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
@@ -25,7 +33,9 @@
 
     html, body {
       height: 100%;
+      height: 100dvh;
       margin: 0;
+      overflow: hidden;
     }
 
     body {
@@ -60,8 +70,9 @@
       top: 16px;
       left: 16px;
       width: min(336px, calc(100vw - 32px));
-      max-height: calc(100vh - 32px);
+      max-height: calc(100dvh - 32px);
       overflow: auto;
+      overscroll-behavior: contain;
       padding: 16px 16px 14px;
       border-radius: 18px;
       border: 1px solid rgba(28, 25, 21, 0.08);
@@ -477,15 +488,65 @@
 
     @media (max-width: 720px) {
       .panel {
-        top: 10px;
-        left: 10px;
-        right: 10px;
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
         width: auto;
-        max-height: 46vh;
+        max-height: min(58dvh, 460px);
+        border-radius: 22px 22px 0 0;
+        border-top-width: 4px;
+        padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
       }
 
-      h1 { font-size: 24px; }
-      .distance { font-size: 34px; }
+      .panel.is-collapsed {
+        width: auto;
+        max-height: none;
+      }
+
+      .panel.is-collapsed .panel-head,
+      .panel.is-collapsed .details {
+        display: none;
+      }
+
+      .switch { margin-top: 0; gap: 8px; }
+      .switch button { min-height: 48px; padding: 6px 8px 5px; }
+      .switch button b { font-size: 24px; }
+      .actions { margin-top: 8px; }
+      .actions button { min-height: 44px; padding: 8px 14px; }
+      .along {
+        margin-top: 8px;
+        padding-top: 8px;
+        min-height: 0;
+      }
+      h1 { font-size: 22px; }
+      .distance { font-size: 32px; }
+
+      .deviation {
+        top: calc(10px + env(safe-area-inset-top));
+        bottom: auto;
+        left: 12px;
+        right: 12px;
+        padding: 14px 16px;
+      }
+
+      .deviation h2 { font-size: 24px; }
+
+      .loading { bottom: auto; top: calc(12px + env(safe-area-inset-top)); }
+
+      .maplibregl-ctrl-bottom-left,
+      .maplibregl-ctrl-bottom-right {
+        bottom: auto;
+        top: calc(10px + env(safe-area-inset-top));
+      }
+
+      .maplibregl-ctrl-bottom-left { left: 8px; }
+      .maplibregl-ctrl-bottom-right { right: 8px; }
+
+      .maplibregl-ctrl-group button {
+        width: 44px;
+        height: 44px;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -503,7 +564,6 @@
         <p class="kicker">Casablanca Marathon</p>
         <h1>2026 course</h1>
       </div>
-      <button type="button" class="text-btn" id="collapse" aria-expanded="true" aria-controls="details">Map only</button>
     </header>
 
     <div class="switch" role="radiogroup" aria-label="Course distance">
@@ -520,6 +580,7 @@
     <div class="actions">
       <button type="button" id="track" aria-pressed="false">Guide me</button>
       <button type="button" id="recenter" class="ghost" hidden>Recenter</button>
+      <button type="button" class="ghost" id="collapse" aria-expanded="true" aria-controls="details">Map only</button>
     </div>
     <p class="along" id="along">Guide me to follow the course from your location.</p>
 
@@ -1216,7 +1277,8 @@
     function padding() {
       const rect = panel.getBoundingClientRect();
       if (window.innerWidth < 720) {
-        return { top: Math.round(rect.bottom + 16), bottom: 24, left: 16, right: 16 };
+        const bottom = Math.max(24, Math.round(window.innerHeight - rect.top + 16));
+        return { top: 72, bottom, left: 16, right: 64 };
       }
       return { top: 24, bottom: 36, left: Math.round(rect.right + 16), right: 24 };
     }
@@ -1488,11 +1550,17 @@
       if (document.visibilityState === "visible" && tracking) keepAwake();
     });
 
-    document.getElementById("collapse").addEventListener("click", () => {
+    const collapseButton = document.getElementById("collapse");
+    if (window.matchMedia("(max-width: 720px)").matches) {
+      panel.classList.add("is-collapsed");
+      collapseButton.setAttribute("aria-expanded", "false");
+      collapseButton.textContent = "Details";
+    }
+    collapseButton.addEventListener("click", () => {
       const collapsed = panel.classList.toggle("is-collapsed");
-      const button = document.getElementById("collapse");
-      button.setAttribute("aria-expanded", String(!collapsed));
-      button.textContent = collapsed ? "Details" : "Map only";
+      collapseButton.setAttribute("aria-expanded", String(!collapsed));
+      collapseButton.textContent = collapsed ? "Details" : "Map only";
+      if (map) map.resize();
     });
 
     document.addEventListener("keydown", (event) => {
@@ -1503,6 +1571,12 @@
     });
 
     window.addEventListener("resize", () => map.resize());
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", () => map.resize());
+    }
+    if ("serviceWorker" in navigator && location.protocol !== "file:") {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    }
     }
   </script>
 </body>
