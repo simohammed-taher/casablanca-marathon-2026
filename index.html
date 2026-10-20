@@ -241,6 +241,9 @@
     }
 
     .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-top: 12px;
     }
 
@@ -257,6 +260,22 @@
     }
 
     .actions button:hover { background: #322c26; }
+
+    #track {
+      background: var(--accent);
+    }
+
+    #track[aria-pressed="true"] {
+      background: var(--ink);
+    }
+
+    .actions button.ghost {
+      background: transparent;
+      color: var(--ink);
+      box-shadow: inset 0 0 0 1.5px rgba(28, 25, 21, 0.18);
+    }
+
+    .actions button.ghost:hover { background: var(--paper); }
 
     .along {
       margin: 12px 0 0;
@@ -314,6 +333,11 @@
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
     }
 
+    .hover-dot,
+    .you-mark {
+      pointer-events: none;
+    }
+
     .hover-dot {
       width: 14px;
       height: 14px;
@@ -321,7 +345,26 @@
       border-radius: 50%;
       background: white;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-      pointer-events: none;
+    }
+
+    .you-mark {
+      width: 16px;
+      height: 16px;
+      border: 3px solid white;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 32%, transparent);
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .you-mark {
+        animation: you-pulse 1.8s ease-out infinite;
+      }
+    }
+
+    @keyframes you-pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+      100% { box-shadow: 0 0 0 16px transparent; }
     }
 
     .course-popup { pointer-events: none; }
@@ -442,6 +485,12 @@
       </button>
     </div>
 
+    <div class="actions">
+      <button type="button" id="track" aria-pressed="false">Track me</button>
+      <button type="button" id="recenter" class="ghost" hidden>Recenter</button>
+    </div>
+    <p class="along" id="along">Follow the line to read distance and elevation.</p>
+
     <div class="details" id="details">
       <p class="kind" id="kind"></p>
       <p class="distance" id="distance"></p>
@@ -464,12 +513,12 @@
           <span id="ele-max"></span>
         </div>
       </figure>
-      <p class="hint">Zoom in to read road, street, and alley names. The course line sits underneath the labels. Keys 1 and 2 switch the distance.</p>
+      <p class="hint">Track me follows the course from where you are. The line ahead moves with you, and it stays put when you stop.</p>
       <p class="file" id="file"></p>
       <div class="actions">
-        <button type="button" id="fit">Show full course</button>
+        <button type="button" id="fit" class="ghost">Show full course</button>
+        <button type="button" id="reset-progress" class="ghost" hidden>Start over</button>
       </div>
-      <p class="along" id="along">Follow the line to read distance and elevation.</p>
     </div>
   </aside>
 
@@ -528,6 +577,28 @@
       Object.entries(window.ROUTES || {}).map(([id, route]) => [id, prepare(route)])
     );
 
+    const PROGRESS_KEY = "casa-marathon-progress";
+
+    function loadProgress() {
+      try {
+        const data = JSON.parse(localStorage.getItem(PROGRESS_KEY) || "{}");
+        return data && typeof data === "object" ? data : {};
+      } catch (error) {
+        return {};
+      }
+    }
+
+    function saveProgress() {
+      localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+    }
+
+    let progress = loadProgress();
+    let tracking = false;
+    let follow = false;
+    let watchId = null;
+    let wakeLock = null;
+    let youMarker = null;
+
     function formatKm(meters) {
       return (meters / 1000).toFixed(2) + " km";
     }
@@ -571,11 +642,12 @@
         const away = Math.hypot((lat - plat) * 111320, (lng - plng) * 111320 * cos);
         if (away < best) {
           best = away;
-          result = {
+            result = {
             along: route.cum[i - 1] + t * (route.cum[i] - route.cum[i - 1]),
             lat: plat,
             lng: plng,
-            ele: a[2] + t * (b[2] - a[2])
+            ele: a[2] + t * (b[2] - a[2]),
+            away
           };
         }
       }
@@ -611,7 +683,11 @@
       });
       const line = coords.map((pair, index) => `${index ? "L" : "M"}${pair[0].toFixed(1)} ${pair[1].toFixed(1)}`).join(" ");
       const svg = document.getElementById("spark");
-      svg.innerHTML = `<path d="${line} L${width} ${height} L0 ${height} Z" fill="${route.color}" opacity="0.16"></path><path d="${line}" fill="none" stroke="${route.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>`;
+      const saved = progress[route.id];
+      const mark = saved && saved.along > 0
+        ? `<line x1="${((saved.along / route.total) * width).toFixed(1)}" y1="0" x2="${((saved.along / route.total) * width).toFixed(1)}" y2="${height}" stroke="${route.color}" stroke-width="1.5"></line>`
+        : "";
+      svg.innerHTML = `<path d="${line} L${width} ${height} L0 ${height} Z" fill="${route.color}" opacity="0.16"></path><path d="${line}" fill="none" stroke="${route.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>${mark}`;
       document.getElementById("ele-min").textContent = Math.round(min) + " m";
       document.getElementById("ele-max").textContent = Math.round(max) + " m";
     }
@@ -650,10 +726,242 @@
       document.title = route.label + " km · Casablanca Marathon 2026";
       liveEl.textContent = "Showing the " + route.label + " km " + route.title.toLowerCase() + ", " + formatKm(route.total) + ".";
       if (location.hash !== "#" + route.id) history.replaceState(null, "", "#" + route.id);
+      renderStatus();
     }
 
     function resetAlong() {
-      alongEl.innerHTML = "Follow the line to read distance and elevation.";
+      renderStatus();
+    }
+
+    function renderStatus() {
+      const route = prepared[activeId];
+      const resetButton = document.getElementById("reset-progress");
+      if (!route) return;
+      const saved = progress[route.id];
+      if (resetButton) resetButton.hidden = !(saved && saved.along > 1);
+      if (!saved || saved.along == null) {
+        kindEl.textContent = route.title;
+        distanceEl.textContent = formatKm(route.total);
+        if (!hoverMarker && !pinned) {
+          alongEl.textContent = tracking
+            ? "Looking for you on the course…"
+            : "Follow the line to read distance and elevation.";
+        }
+        return;
+      }
+      const left = Math.max(0, route.total - saved.along);
+      const off = saved.away > 65;
+      kindEl.textContent = tracking ? "Remaining" : "Stopped at";
+      distanceEl.textContent = tracking ? formatKm(left) : formatKm(saved.along);
+      drawSpark(route);
+      if (hoverMarker || pinned) return;
+      if (tracking && off) {
+        alongEl.innerHTML = `<strong>Stopped at ${formatKm(saved.along)}</strong> You are ${Math.round(saved.away)} m off the course.`;
+      } else if (tracking) {
+        alongEl.innerHTML = `<strong>${formatKm(left)}</strong> left · ${formatKm(saved.along)} done.`;
+      } else {
+        alongEl.innerHTML = `<strong>Stopped at ${formatKm(saved.along)}</strong> ${formatKm(left)} left. Track me to continue.`;
+      }
+    }
+
+    function resolveAlong(previous, snap, total) {
+      if (!snap || snap.away > 65) return previous == null ? null : previous;
+      if (previous == null) return snap.along;
+      if (previous > total * 0.9 && snap.along < total * 0.1) return total;
+      let delta = snap.along - previous;
+      if (delta > total / 2) delta -= total;
+      if (delta < -total / 2) delta += total;
+      if (delta < -25) return previous;
+      return snap.along;
+    }
+
+    function sliceLine(route, from, to) {
+      const start = pointAt(route, from);
+      const end = pointAt(route, to);
+      const coords = [[start.lng, start.lat]];
+      for (let i = 0; i < route.points.length; i += 1) {
+        const distance = route.cum[i];
+        if (distance > from + 0.5 && distance < to - 0.5) {
+          coords.push([route.points[i][1], route.points[i][0]]);
+        }
+      }
+      coords.push([end.lng, end.lat]);
+      return {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: coords }
+      };
+    }
+
+    function emptyLine() {
+      return { type: "FeatureCollection", features: [] };
+    }
+
+    function paintProgress(route) {
+      if (!mapReady || !map.getSource("remaining")) return;
+      const saved = progress[route.id];
+      const active = saved && saved.along > 1 && saved.along < route.total - 1;
+      map.setPaintProperty("course-line", "line-opacity", active ? 0.18 : 1);
+      map.getSource("done").setData(active ? sliceLine(route, 0, saved.along) : emptyLine());
+      map.getSource("remaining").setData(active ? sliceLine(route, saved.along, route.total) : emptyLine());
+      map.setPaintProperty("remaining-line", "line-color", route.color);
+      placeYou(route);
+    }
+
+    function placeYou(route) {
+      const saved = progress[route.id];
+      if (!saved || saved.along == null || !mapReady) {
+        if (youMarker) {
+          youMarker.remove();
+          youMarker = null;
+        }
+        return;
+      }
+      const spot = pointAt(route, saved.along);
+      if (!youMarker) {
+        const el = document.createElement("div");
+        el.className = "you-mark";
+        el.setAttribute("aria-label", "Where you stopped on the course");
+        youMarker = new maplibregl.Marker({ element: el, anchor: "center" })
+          .setLngLat([spot.lng, spot.lat])
+          .addTo(map);
+      } else {
+        youMarker.setLngLat([spot.lng, spot.lat]);
+      }
+    }
+
+    function updateTrackButtons() {
+      const button = document.getElementById("track");
+      const recenter = document.getElementById("recenter");
+      button.setAttribute("aria-pressed", tracking ? "true" : "false");
+      button.textContent = tracking ? "Stop" : "Track me";
+      recenter.hidden = !(tracking && !follow);
+    }
+
+    async function keepAwake() {
+      try {
+        if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen");
+      } catch (error) {
+        wakeLock = null;
+      }
+    }
+
+    function releaseAwake() {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+    }
+
+    let lastFollowAt = 0;
+
+    function followSpot(route) {
+      const saved = progress[route.id];
+      if (!follow || !mapReady || !saved || saved.along == null) return;
+      const now = Date.now();
+      if (now - lastFollowAt < 700) return;
+      lastFollowAt = now;
+      const spot = pointAt(route, saved.along);
+      const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      map.easeTo({
+        center: [spot.lng, spot.lat],
+        zoom: Math.max(map.getZoom(), 16),
+        duration: motion ? 0 : 650,
+        essential: true
+      });
+    }
+
+    function onFix(position) {
+      const route = prepared[activeId];
+      if (!route) return;
+      const poorFix = position.coords.accuracy > 80;
+      const previous = progress[route.id] ? progress[route.id].along : null;
+      if (poorFix) {
+        alongEl.innerHTML = previous == null
+          ? "Waiting for a sharper location fix…"
+          : `<strong>Stopped at ${formatKm(previous)}</strong> Waiting for a sharper location fix…`;
+        return;
+      }
+      const snap = closest(
+        { lat: position.coords.latitude, lng: position.coords.longitude },
+        route
+      );
+      const along = resolveAlong(previous, snap, route.total);
+      if (along == null) {
+        if (!hoverMarker && !pinned) alongEl.textContent = "Move onto the course to start tracking from where you are.";
+        return;
+      }
+      const spot = pointAt(route, along);
+      progress[route.id] = {
+        along,
+        lat: spot.lat,
+        lng: spot.lng,
+        ele: spot.ele,
+        away: snap.away,
+        updated: Date.now()
+      };
+      saveProgress();
+      if (mapReady) paintProgress(route);
+      renderStatus();
+      followSpot(route);
+    }
+
+    function onGeoError(error) {
+      if (error && error.code === 1) {
+        stopTracking();
+        alongEl.textContent = "Location is blocked. Allow location for this site, then press Track me again.";
+        return;
+      }
+      const route = prepared[activeId];
+      const saved = route && progress[route.id];
+      alongEl.innerHTML = saved
+        ? `<strong>Stopped at ${formatKm(saved.along)}</strong> Waiting for a location fix…`
+        : "Waiting for a location fix…";
+    }
+
+    function startTracking() {
+      if (!navigator.geolocation) {
+        alongEl.textContent = "This browser cannot read your location.";
+        return;
+      }
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      tracking = true;
+      follow = true;
+      lastFollowAt = 0;
+      updateTrackButtons();
+      renderStatus();
+      watchId = navigator.geolocation.watchPosition(onFix, onGeoError, {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 20000
+      });
+      keepAwake();
+      const route = prepared[activeId];
+      if (route && progress[route.id] && mapReady) followSpot(route);
+    }
+
+    function stopTracking() {
+      tracking = false;
+      follow = false;
+      if (watchId != null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      releaseAwake();
+      updateTrackButtons();
+      renderStatus();
+    }
+
+    function clearProgress() {
+      if (!activeId) return;
+      delete progress[activeId];
+      saveProgress();
+      if (youMarker) {
+        youMarker.remove();
+        youMarker = null;
+      }
+      if (mapReady && prepared[activeId]) paintProgress(prepared[activeId]);
+      renderStatus();
     }
 
     function hideHover() {
@@ -760,6 +1068,7 @@
       map.setPaintProperty("course-line", "line-color", route.color);
       placeEnds(route);
       placeKm(route);
+      paintProgress(route);
     }
 
     function show(id) {
@@ -773,7 +1082,8 @@
       updatePanel(route);
       if (!mapReady) return;
       draw(route);
-      if (changed) fit(route);
+      if (changed && !(tracking && follow)) fit(route);
+      if (changed && tracking && follow) followSpot(route);
     }
 
     const initial = prepared[location.hash.replace("#", "")] ? location.hash.replace("#", "") : "21";
@@ -873,6 +1183,39 @@
           "line-width": ["interpolate", ["linear"], ["zoom"], 11, 2.5, 14, 4.2, 17, 3.4]
         }
       }, beforeId);
+      map.addSource("done", { type: "geojson", data: emptyLine() });
+      map.addSource("remaining", { type: "geojson", data: emptyLine() });
+      addCourseLayer({
+        id: "done-line",
+        type: "line",
+        source: "done",
+        layout,
+        paint: {
+          "line-color": "#8d8478",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 2.5, 14, 4, 17, 3.2],
+          "line-opacity": 0.95
+        }
+      }, beforeId);
+      addCourseLayer({
+        id: "remaining-casing",
+        type: "line",
+        source: "remaining",
+        layout,
+        paint: {
+          "line-color": "#fffdf8",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 5, 14, 8, 17, 7]
+        }
+      }, beforeId);
+      addCourseLayer({
+        id: "remaining-line",
+        type: "line",
+        source: "remaining",
+        layout,
+        paint: {
+          "line-color": "#0f6e56",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 11, 3, 14, 5, 17, 4]
+        }
+      }, beforeId);
       addCourseLayer({
         id: "course-arrows",
         type: "symbol",
@@ -898,8 +1241,14 @@
       if (mapReady && prepared[activeId]) placeKm(prepared[activeId]);
     });
 
+    map.on("dragstart", () => {
+      if (!tracking || !follow) return;
+      follow = false;
+      updateTrackButtons();
+    });
+
     map.on("mousemove", (event) => {
-      if (!mapReady || pinned || !prepared[activeId]) return;
+      if (!mapReady || pinned || tracking || !prepared[activeId]) return;
       const info = closest(event.lngLat, prepared[activeId]);
       if (!info || pixelDistance(info, event.point) > 16) {
         if (hoverMarker) hideHover();
@@ -935,7 +1284,29 @@
     document.getElementById("btn-21").addEventListener("click", () => show("21"));
     document.getElementById("btn-42").addEventListener("click", () => show("42"));
     document.getElementById("fit").addEventListener("click", () => {
+      follow = false;
+      updateTrackButtons();
       if (mapReady && prepared[activeId]) fit(prepared[activeId]);
+    });
+
+    document.getElementById("track").addEventListener("click", () => {
+      if (tracking) stopTracking();
+      else startTracking();
+    });
+
+    document.getElementById("recenter").addEventListener("click", () => {
+      follow = true;
+      lastFollowAt = 0;
+      updateTrackButtons();
+      if (prepared[activeId]) followSpot(prepared[activeId]);
+    });
+
+    document.getElementById("reset-progress").addEventListener("click", () => {
+      clearProgress();
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && tracking) keepAwake();
     });
 
     document.getElementById("collapse").addEventListener("click", () => {
